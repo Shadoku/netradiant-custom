@@ -42,6 +42,7 @@ enum class ETheme{
 	GreyBlue2,
 	BlenderDark,
 	BlenderLight,
+	GtkRadiant14,
 };
 
 static ETheme s_theme = ETheme::Dark;
@@ -175,6 +176,44 @@ void theme_set( ETheme theme ){
 		QDir::addSearchPath( "julius", AppPath_get() ); // qss image paths prefix to avoid dependency on cwd
 		qApp->setStyleSheet( load_qss( "blenderlight.qss" ) );
 	}
+	else if( theme == ETheme::GtkRadiant14 ){ // colors of the default GTK+ 2 engine, which GtkRadiant 1.3/1.4 used
+		set_icon_theme( true );
+		qApp->setStyle( "Fusion" );
+		QPalette palette;
+		const QColor normalColor( 0xd6, 0xd6, 0xd6 );
+		const QColor prelightColor( 0xee, 0xee, 0xee );
+		const QColor activeColor( 0xc3, 0xc3, 0xc3 );
+		const QColor selectedColor( 0x4b, 0x69, 0x83 );
+		const QColor disabledColor( 0x75, 0x75, 0x75 );
+		palette.setColor( QPalette::Window, normalColor );
+		palette.setColor( QPalette::WindowText, Qt::black );
+		palette.setColor( QPalette::Base, Qt::white );
+		palette.setColor( QPalette::AlternateBase, prelightColor );
+		palette.setColor( QPalette::ToolTipBase, QColor( 0xff, 0xff, 0xc0 ) );
+		palette.setColor( QPalette::ToolTipText, Qt::black );
+		palette.setColor( QPalette::Text, Qt::black );
+		palette.setColor( QPalette::Button, normalColor );
+		palette.setColor( QPalette::ButtonText, Qt::black );
+		palette.setColor( QPalette::BrightText, Qt::white );
+		palette.setColor( QPalette::Link, QColor( 0, 0, 0xee ) );
+		for( const auto role : { QPalette::WindowText, QPalette::Text, QPalette::ButtonText } )
+			palette.setColor( QPalette::Disabled, role, disabledColor );
+
+		palette.setColor( QPalette::Light, Qt::white ); // also disabled menu text shadow, as in GTK
+		palette.setColor( QPalette::Midlight, prelightColor );
+		palette.setColor( QPalette::Mid, activeColor );
+		palette.setColor( QPalette::Dark, QColor( 0x96, 0x96, 0x96 ) );
+		palette.setColor( QPalette::Shadow, Qt::black );
+
+		palette.setColor( QPalette::Highlight, selectedColor );
+		palette.setColor( QPalette::HighlightedText, Qt::white );
+		palette.setColor( QPalette::Inactive, QPalette::Highlight, QColor( 0xc0, 0xc0, 0xc0 ) );
+		palette.setColor( QPalette::Inactive, QPalette::HighlightedText, Qt::black );
+
+		qApp->setPalette( palette );
+		QDir::addSearchPath( "gtkr", AppPath_get() ); // qss image paths prefix to avoid dependency on cwd
+		qApp->setStyleSheet( load_qss( "gtkradiant14.qss" ) );
+	}
 
 	defaults.is1stThemeApplication = false;
 }
@@ -184,7 +223,7 @@ void theme_construct_menu( class QMenu *menu ){
 	m->setTearOffEnabled( g_Layout_enableDetachableMenus.m_value );
 	auto *group = new QActionGroup( m );
 
-	for( const auto *name : { "Default", "Fusion", "Dark", "Darker", "GreyBlue2", "BlenderDark", "BlenderLight" } )
+	for( const auto *name : { "Default", "Fusion", "Dark", "Darker", "GreyBlue2", "BlenderDark", "BlenderLight", "GtkRadiant 1.4" } )
 	{
 		auto *a = m->addAction( name );
 		a->setCheckable( true );
