@@ -109,6 +109,7 @@
 #include "layerswindow.h"
 #include "url.h"
 #include "xywindow.h"
+#include "zwindow.h"
 #include "windowobservers.h"
 #include "renderstate.h"
 #include "feedback.h"
@@ -850,6 +851,9 @@ void XY_UpdateAllWindows(){
 		g_pParentWnd->forEachXYWnd( []( XYWnd* xywnd ){
 			XYWnd_Update( *xywnd );
 		} );
+		if ( g_pParentWnd->GetZWnd() != 0 ) {
+			ZWnd_Update( *g_pParentWnd->GetZWnd() );
+		}
 	}
 }
 
@@ -938,6 +942,9 @@ void create_view_menu( QMenuBar *menubar, MainFrame::EViewStyle style ){
 		create_check_menu_item_with_mnemonic( menu, "XY (Top) View", "ToggleView" );
 		create_check_menu_item_with_mnemonic( menu, "XZ (Front) View", "ToggleFrontView" );
 		create_check_menu_item_with_mnemonic( menu, "YZ (Side) View", "ToggleSideView" );
+	}
+	if ( style != MainFrame::eSplit ) {
+		create_check_menu_item_with_mnemonic( menu, "Z View", "ToggleZView" );
 	}
 	if ( style != MainFrame::eRegular && style != MainFrame::eRegularLeft ) {
 		create_menu_item_with_mnemonic( menu, "Console", "ToggleConsole" );
@@ -1730,10 +1737,18 @@ void MainFrame::Create(){
 			// console
 			m_vSplit->addWidget( Console_constructWindow() );
 
-			// xy
+			// xy, with z on its left
 			m_pXYWnd = new XYWnd();
 			m_pXYWnd->SetViewType( XY );
-			m_vSplit->insertWidget( 0, m_pXYWnd->GetWidget() );
+			m_pZWnd = new ZWnd();
+			m_zSplit = new QSplitter();
+			m_zSplit->addWidget( m_pZWnd->GetWidget() );
+			m_zSplit->addWidget( m_pXYWnd->GetWidget() );
+			m_zSplit->setCollapsible( 0, false );
+			m_zSplit->setStretchFactor( 0, 0 );
+			m_zSplit->setStretchFactor( 1, 1 );
+			m_vSplit->insertWidget( 0, m_zSplit );
+			Z_Shown_Construct( m_pZWnd->GetWidget() );
 			{
 				// camera
 				m_pCamWnd = NewCamWnd();
@@ -1824,6 +1839,24 @@ void MainFrame::Create(){
 			YZ_Side_Shown_Construct( window );
 		}
 
+		{
+			auto *window = new QWidget( m_window, Qt::Dialog | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint | Qt::WindowCloseButtonHint );
+			window->setWindowTitle( "Z" );
+			g_guiSettings.addWindow( window, "floating/z", 120, 650, 910, 100 );
+
+			m_pZWnd = new ZWnd();
+			m_pZWnd->m_parent = window;
+
+			{
+				auto *box = new QHBoxLayout( window );
+				box->setContentsMargins( 1, 1, 1, 1 );
+				box->addWidget( m_pZWnd->GetWidget() );
+			}
+
+			GlobalWindowObservers_connectTopLevel( window );
+			Z_Shown_Construct( window );
+		}
+
 		GroupDialog_show();
 	}
 	else // 4 way
@@ -1897,6 +1930,8 @@ void MainFrame::RestoreGuiState(){
 		g_guiSettings.addSplitter( m_hSplit, "MainFrame/m_hSplit", { 384, 576 } );
 		g_guiSettings.addSplitter( m_vSplit, "MainFrame/m_vSplit", { 377, 20 } );
 		g_guiSettings.addSplitter( m_vSplit2, "MainFrame/m_vSplit2", { 250, 150 } );
+		if( m_zSplit != nullptr )
+			g_guiSettings.addSplitter( m_zSplit, "MainFrame/m_zSplit", { 96, 864 } );
 	}
 }
 
@@ -1908,6 +1943,7 @@ void MainFrame::Shutdown(){
 	delete std::exchange( m_pXYWnd, nullptr );
 	delete std::exchange( m_pYZWnd, nullptr );
 	delete std::exchange( m_pXZWnd, nullptr );
+	delete std::exchange( m_pZWnd, nullptr );
 
 	ModelBrowser_destroyWindow();
 	LayersBrowser_destroyWindow();

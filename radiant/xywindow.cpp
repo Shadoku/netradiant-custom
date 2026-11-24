@@ -162,7 +162,7 @@ inline unsigned int buttons_for_button_and_modifiers( ButtonIdentifier button, M
 	return buttons;
 }
 
-inline unsigned int buttons_for_event_button( QMouseEvent* event ){
+unsigned int buttons_for_event_button( QMouseEvent* event ){
 	unsigned int flags = 0;
 
 	switch ( event->button() )
@@ -188,7 +188,7 @@ inline unsigned int buttons_for_event_button( QMouseEvent* event ){
 	return flags;
 }
 
-inline unsigned int buttons_for_state( const QMouseEvent& event ){
+unsigned int buttons_for_state( const QMouseEvent& event ){
 	unsigned int flags = 0;
 
 	if ( event.buttons() & Qt::MouseButton::LeftButton ) {

@@ -65,6 +65,7 @@
 #include "camwindow.h"
 #include "watchbsp.h"
 #include "xywindow.h"
+#include "zwindow.h"
 #include "entity.h"
 #include "select.h"
 #include "preferences.h"
@@ -257,6 +258,7 @@ public:
 		SurfaceInspector_Construct();
 		CamWnd_Construct();
 		XYWindow_Construct();
+		ZWindow_Construct();
 		BuildMonitor_Construct();
 		TextureBrowser_Construct();
 		ModelBrowser_Construct();

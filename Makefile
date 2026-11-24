@@ -965,6 +965,7 @@ $(INSTALLDIR)/radiant.$(EXE): \
 	radiant/windowobservers.o \
 	radiant/xmlstuff.o \
 	radiant/xywindow.o \
+	radiant/zwindow.o \
 	libcommandlib.$(A) \
 	libgtkutil.$(A) \
 	libl_net.$(A) \

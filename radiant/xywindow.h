@@ -246,6 +246,12 @@ inline void XYWnd_Update( XYWnd& xywnd ){
 
 void XY_Centralize();
 
+class QMouseEvent;
+unsigned int buttons_for_event_button( QMouseEvent* event );
+unsigned int buttons_for_state( const QMouseEvent& event );
+unsigned int Move_buttons();
+unsigned int MoveCamera_buttons();
+
 struct xywindow_globals_t
 {
 	Vector3 color_gridback = { .225803f, .225803f, .225803f };
