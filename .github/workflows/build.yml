@@ -85,6 +85,8 @@ jobs:
     if: github.ref == 'refs/heads/master' && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
     needs: [windows-msys, linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the tag and the release
     steps:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
