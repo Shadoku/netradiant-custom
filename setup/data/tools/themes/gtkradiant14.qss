@@ -104,6 +104,7 @@ QMenu::right-arrow:disabled {
 /* ---- QToolBar ---- */
 
 QToolBar {
+	icon-size: 16px 16px; /* the size of the classic icons in bitmaps_classic/ */
 	background: #d6d6d6;
 	border-image: url(gtkr:themes/gtkradiant14/frame_out.svg) 2;
 	border-width: 2px;

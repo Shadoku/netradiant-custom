@@ -89,6 +89,12 @@ rebuild and commit them again after changing the source.
   `radiant/colors.cpp`.
 - **Icons**: SVG files in `setup/data/tools/bitmaps/`. The light icon set is generated at startup
   by `Bitmaps_generateLight` in `libs/gtkutil/image.cpp`, which swaps a few fixed colours.
+- **Classic icons**: `setup/data/tools/bitmaps_classic/` is a Qt icon theme of 16px PNG icons
+  (with 2x and 3x copies enlarged without smoothing), used only by the GtkRadiant 1.4 GUI theme.
+  Its `index.theme` inherits the light icon set, so an icon it lacks falls back to the SVG one.
+  Most icons are GtkRadiant originals (`install/bitmaps/` in `TTimo/GtkRadiant`, GPL); the rest
+  are NetRadiant's older icons from `setup/data/tools-png/` and `setup/data/tools-src/`. That
+  theme's `.qss` sets the toolbar icon size to 16px to match.
 - **Window layout**: a separate preference (`g_Layout_viewStyle` in `radiant/mainframe.cpp`).
   Regular is the classic arrangement: XY view and console on the left, camera and texture
   browser on the right.

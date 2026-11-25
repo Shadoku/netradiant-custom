@@ -1,0 +1,19 @@
+[Icon Theme]
+Name=ClassicIcons
+Comment=GtkRadiant 1.4 toolbar icons; icons it lacks come from the light icon set
+Inherits=bitmaps_light
+Directories=16,16@2,16@3
+
+[16]
+Size=16
+Type=Fixed
+
+[16@2]
+Size=16
+Scale=2
+Type=Fixed
+
+[16@3]
+Size=16
+Scale=3
+Type=Fixed

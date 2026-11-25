@@ -178,6 +178,7 @@ void theme_set( ETheme theme ){
 	}
 	else if( theme == ETheme::GtkRadiant14 ){ // colors of the default GTK+ 2 engine, which GtkRadiant 1.3/1.4 used
 		set_icon_theme( true );
+		QIcon::setThemeName( "bitmaps_classic" ); // 16px GtkRadiant icons; inherits the light set for the icons it lacks
 		qApp->setStyle( "Fusion" );
 		QPalette palette;
 		const QColor normalColor( 0xd6, 0xd6, 0xd6 );
