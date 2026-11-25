@@ -26,7 +26,9 @@
 #include "map.h"
 
 class QWidget;
+class QObject;
 class BrushInstance;
+class Face;
 
 /// \brief The vertical extent of one brush along the Z view's sample line.
 struct ZBrushColumn
@@ -35,6 +37,8 @@ struct ZBrushColumn
 	float zmin, zmax;
 	Vector3 colour; // texture colour of the top face
 	bool selected;
+	Face* top;    // the faces the sample line leaves and enters the brush through
+	Face* bottom;
 };
 
 /// \brief Z view: shows the vertical extent of the brushes under the probe point, and the camera height.
@@ -87,9 +91,8 @@ public:
 	const Vector3& GetProbePoint() const {
 		return m_probe;
 	}
+	/// \brief Places the probe point and stops it following the camera.
 	void SetProbePoint( const Vector3& point );
-	/// \brief Phase 1: the probe point follows the camera.
-	bool m_probeFollowsCamera;
 	void updateProbePoint();
 
 	/// \brief Collects the visible brushes the sample line passes through, largest interval first.
@@ -100,6 +103,8 @@ public:
 	void Z_MouseDown( int x, int y, unsigned int buttons );
 	void Z_MouseUp( int x, int y, unsigned int buttons );
 	void Z_MouseMoved( int x, int y, unsigned int buttons );
+	/// \brief Restores the state from before the current drag, if any; the drag then does nothing until the button is released.
+	void Z_CancelDrag();
 
 private:
 	float m_origin;
@@ -108,6 +113,40 @@ private:
 
 	bool m_move_started;
 	int m_move_y;
+
+	enum EDrag
+	{
+		eDragNone,
+		eDragPending,   // button pressed, mouse not moved yet: a click selects
+		eDragMove,      // moving the selection vertically
+		eDragFace,      // moving the top or bottom face of one brush
+		eDragCancelled, // cancelled; waiting for the button release
+	};
+	enum EDragAction
+	{
+		eActionNone,
+		eActionMove,
+		eActionSelectMove,
+		eActionFace,
+	};
+	EDrag m_drag;
+	EDragAction m_drag_action;
+	int m_drag_y;
+	float m_drag_z;               // world z under the press
+	float m_drag_offset;          // applied vertical offset, after snapping and clamping
+	BrushInstance* m_drag_brush;  // face drag, or the brush to select for eActionSelectMove
+	Face* m_drag_face;
+	bool m_drag_top;
+	QObject* m_drag_keyFilter;
+
+	bool findEdge( const std::vector<ZBrushColumn>& columns, int y, const ZBrushColumn*& column, bool& top ) const;
+	void dragBegin();
+	void dragUpdate( int y );
+	void dragEnd();
+	void moveSelection( float offset );
+	void moveFace( float offset );
+	void selectClick( int y, unsigned int buttons );
+	void Z_DrawDragInfo();
 
 	void Z_DrawGrid( bool text );
 	void Z_DrawColumns();
@@ -121,5 +160,11 @@ inline void ZWnd_Update( ZWnd& zwnd ){
 }
 
 void Z_Shown_Construct( QWidget* parent );
+
+/// \brief Whether the probe point can be placed from the XY view: the Z view exists and is shown.
+bool ZWnd_probeEditable();
+void ZWnd_setProbePoint( const Vector3& point );
+/// \brief Draws the probe marker in an XY (top) view, whose modelview is in world units; \p scale is its pixels per unit.
+void ZWnd_drawProbeMarker( float scale );
 
 void ZWindow_Construct();

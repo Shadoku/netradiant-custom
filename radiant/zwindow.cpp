@@ -37,12 +37,17 @@
 #include "preferencesystem.h"
 #include "stringio.h"
 
+#include <QApplication>
 #include <QOpenGLWidget>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QSplitter>
 #include <QTimer>
 
 #include "math/plane.h"
+#include "scenelib.h"
+#include "transformlib.h"
+#include "iundo.h"
 #include "stream/stringstream.h"
 #include "texturelib.h"
 
@@ -53,14 +58,42 @@
 #include "camwindow.h"
 #include "mainframe.h"
 #include "commands.h"
+#include "dialog.h"
 #include "grid.h"
 #include "xywindow.h"
 
 
 const int c_zwnd_minWidth = 24;
 const int c_zwnd_defaultWidth = 96;
+const int c_zwnd_edgeEpsilon = 4; // device pixels around a column's top or bottom that grab that face
+const int c_zwnd_dragThreshold = 2; // device pixels the mouse moves before a press becomes a drag
 
 ToggleShown g_z_shown( false );
+
+bool g_zwnd_probeFollowsCamera = true;
+ToggleItem g_zwnd_probeFollowsCamera_item{ BoolExportCaller( g_zwnd_probeFollowsCamera ) };
+
+/// \brief Installed on the application during a Z view drag: Escape cancels the drag, and no shortcut runs,
+/// since one could change or delete the brushes being dragged.
+class ZDragKeyFilter : public QObject
+{
+	ZWnd& m_zwnd;
+public:
+	ZDragKeyFilter( ZWnd& zwnd ) : m_zwnd( zwnd ){
+	}
+protected:
+	bool eventFilter( QObject *obj, QEvent *event ) override {
+		if( event->type() == QEvent::ShortcutOverride ) {
+			event->accept();
+			return true;
+		}
+		if( event->type() == QEvent::KeyPress && static_cast<QKeyEvent*>( event )->key() == Qt::Key_Escape ) {
+			m_zwnd.Z_CancelDrag();
+			return true;
+		}
+		return QObject::eventFilter( obj, event ); // standard event processing
+	}
+};
 
 class ZGLWidget : public QOpenGLWidget
 {
@@ -154,16 +187,26 @@ ZWnd::ZWnd() :
 	m_parent( 0 ),
 	m_nWidth( 0 ),
 	m_nHeight( 0 ),
-	m_probeFollowsCamera( true ),
 	m_origin( 0 ),
 	m_fScale( 1 ),
 	m_probe( 0, 0, 0 ),
 	m_move_started( false ),
-	m_move_y( 0 )
+	m_move_y( 0 ),
+	m_drag( eDragNone ),
+	m_drag_action( eActionNone ),
+	m_drag_y( 0 ),
+	m_drag_z( 0 ),
+	m_drag_offset( 0 ),
+	m_drag_brush( nullptr ),
+	m_drag_face( nullptr ),
+	m_drag_top( false ),
+	m_drag_keyFilter( new ZDragKeyFilter( *this ) )
 {
 }
 
 ZWnd::~ZWnd(){
+	Z_CancelDrag();
+	delete m_drag_keyFilter;
 	delete m_gl_widget;
 }
 
@@ -201,11 +244,18 @@ void ZWnd::ZoomOutWithMouse( int y ){
 
 void ZWnd::SetProbePoint( const Vector3& point ){
 	m_probe = point;
+	if ( g_zwnd_probeFollowsCamera ) {
+		g_zwnd_probeFollowsCamera = false;
+		g_zwnd_probeFollowsCamera_item.update();
+	}
 	queueDraw();
+	g_pParentWnd->forEachXYWnd( []( XYWnd* xywnd ){
+		xywnd->queueDraw(); // the probe marker
+	} );
 }
 
 void ZWnd::updateProbePoint(){
-	if ( m_probeFollowsCamera && g_pParentWnd != 0 && g_pParentWnd->GetCamWnd() != 0 ) {
+	if ( g_zwnd_probeFollowsCamera && g_pParentWnd != 0 && g_pParentWnd->GetCamWnd() != 0 ) {
 		m_probe = Camera_getOrigin( *g_pParentWnd->GetCamWnd() );
 	}
 }
@@ -219,7 +269,117 @@ void ZWnd_PositionCamera( ZWnd& zwnd, int y ){
 	}
 }
 
+namespace
+{
+void ZWnd_setStatus( const char* label, float value ){
+	char text[64];
+	snprintf( text, sizeof( text ), "%s%6.1f", label, value );
+	g_pParentWnd->SetStatusText( c_status_position, text );
+}
+
+/// \brief Deselects as a plain click in the XY view does: components in component mode, otherwise everything.
+void Z_deselect(){
+	if ( GlobalSelectionSystem().Mode() == SelectionSystem::eComponent && GlobalSelectionSystem().countSelectedComponents() != 0 ) {
+		GlobalSelectionSystem().setSelectedAllComponents( false );
+	}
+	else
+	{
+		GlobalSelectionSystem().setSelectedAll( false );
+	}
+}
+
+class ZTranslateSelected : public SelectionSystem::Visitor
+{
+	const Vector3 m_translation;
+public:
+	ZTranslateSelected( const Vector3& translation ) : m_translation( translation ){
+	}
+	void visit( scene::Instance& instance ) const override {
+		if ( Transformable* transform = Instance_getTransformable( instance ) ) {
+			transform->setType( TRANSFORM_PRIMITIVE );
+			transform->setRotation( c_rotation_identity );
+			transform->setTranslation( m_translation );
+		}
+	}
+};
+
+/// \brief Applies the pending transforms, as the selection system does at the end of a manipulator drag.
+/// Records undo only inside an undo command, and an identity transform changes nothing.
+class ZFreezeTransforms : public scene::Graph::Walker
+{
+public:
+	bool pre( const scene::Path& path, scene::Instance& instance ) const override {
+		if ( Node_getTransformNode( path.top() ) != 0 ) {
+			if ( Transformable* transform = Instance_getTransformable( instance ) ) {
+				transform->freezeTransform();
+			}
+		}
+		return true;
+	}
+};
+}
+
+bool ZWnd::findEdge( const std::vector<ZBrushColumn>& columns, int y, const ZBrushColumn*& column, bool& top ) const {
+	float best = c_zwnd_edgeEpsilon + .5f;
+	column = nullptr;
+	// smallest interval first, so it wins a tie
+	for ( auto i = columns.rbegin(); i != columns.rend(); ++i )
+	{
+		if ( !i->selected ) {
+			continue;
+		}
+		if ( i->top != nullptr && std::fabs( ZToScreen( i->zmax ) - y ) < best ) {
+			best = std::fabs( ZToScreen( i->zmax ) - y );
+			column = &*i;
+			top = true;
+		}
+		if ( i->bottom != nullptr && std::fabs( ZToScreen( i->zmin ) - y ) < best ) {
+			best = std::fabs( ZToScreen( i->zmin ) - y );
+			column = &*i;
+			top = false;
+		}
+	}
+	return column != nullptr;
+}
+
+void ZWnd::selectClick( int y, unsigned int buttons ){
+	std::vector<ZBrushColumn> columns;
+	collectColumns( columns );
+	const float z = ScreenToZ( y );
+	std::vector<BrushInstance*> hits; // smallest interval first
+	for ( auto i = columns.rbegin(); i != columns.rend(); ++i )
+	{
+		if ( i->zmin <= z && z <= i->zmax ) {
+			hits.push_back( i->brush );
+		}
+	}
+
+	if ( buttons == ZSelectToggle_buttons() ) {
+		if ( !hits.empty() ) {
+			Instance_setSelected( *hits.front(), !hits.front()->isSelected() );
+		}
+	}
+	else // cycle through the brushes under the click, as a plain click in the XY view does
+	{
+		BrushInstance* next = hits.empty()? nullptr : hits.front();
+		for ( std::size_t i = 0; i < hits.size(); ++i )
+		{
+			if ( hits[i]->isSelected() ) {
+				next = hits[( i + 1 ) % hits.size()];
+				break;
+			}
+		}
+		Z_deselect();
+		if ( next != nullptr ) {
+			Instance_setSelected( *next, true );
+		}
+	}
+}
+
 void ZWnd::Z_MouseDown( int x, int y, unsigned int buttons ){
+	if ( m_drag != eDragNone ) {
+		return;
+	}
 	if ( buttons == Move_buttons() ) {
 		m_move_started = true;
 		m_move_y = y;
@@ -227,10 +387,64 @@ void ZWnd::Z_MouseDown( int x, int y, unsigned int buttons ){
 	else if ( buttons == MoveCamera_buttons() ) {
 		ZWnd_PositionCamera( *this, y );
 	}
+	else if ( buttons == ZSelectToggle_buttons() ) {
+		selectClick( y, buttons );
+	}
+	else if ( buttons == ZSelect_buttons() ) {
+		std::vector<ZBrushColumn> columns;
+		collectColumns( columns );
+		const float z = ScreenToZ( y );
+
+		m_drag = eDragPending;
+		m_drag_y = y;
+		m_drag_z = z;
+		m_drag_offset = 0;
+		m_drag_action = eActionNone;
+		m_drag_brush = nullptr;
+		m_drag_face = nullptr;
+
+		const ZBrushColumn* column;
+		bool top;
+		if ( findEdge( columns, y, column, top ) ) {
+			m_drag_action = eActionFace;
+			m_drag_brush = column->brush;
+			m_drag_face = top? column->top : column->bottom;
+			m_drag_top = top;
+		}
+		else if ( std::ranges::any_of( columns, [z]( const ZBrushColumn& c ){ return c.selected && c.zmin <= z && z <= c.zmax; } ) ) {
+			m_drag_action = eActionMove;
+		}
+		else
+		{
+			for ( auto i = columns.rbegin(); i != columns.rend(); ++i )
+			{
+				if ( i->zmin <= z && z <= i->zmax ) {
+					m_drag_action = eActionSelectMove;
+					m_drag_brush = i->brush;
+					break;
+				}
+			}
+		}
+		qApp->installEventFilter( m_drag_keyFilter );
+	}
 }
 
 void ZWnd::Z_MouseUp( int x, int y, unsigned int buttons ){
 	m_move_started = false;
+
+	if ( m_drag != eDragNone && ( buttons & ZSelect_buttons() ) ) {
+		if ( m_drag == eDragPending ) {
+			selectClick( m_drag_y, ZSelect_buttons() );
+		}
+		else if ( m_drag == eDragMove || m_drag == eDragFace ) {
+			dragEnd();
+		}
+		m_drag = eDragNone;
+		m_drag_brush = nullptr;
+		m_drag_face = nullptr;
+		qApp->removeEventFilter( m_drag_keyFilter );
+		queueDraw();
+	}
 }
 
 void ZWnd::Z_MouseMoved( int x, int y, unsigned int buttons ){
@@ -238,12 +452,170 @@ void ZWnd::Z_MouseMoved( int x, int y, unsigned int buttons ){
 		Scroll( y - m_move_y );
 		m_move_y = y;
 	}
+	else if ( m_drag == eDragPending ) {
+		if ( std::abs( y - m_drag_y ) > c_zwnd_dragThreshold ) {
+			dragBegin();
+			dragUpdate( y );
+		}
+	}
+	else if ( m_drag == eDragMove || m_drag == eDragFace ) {
+		dragUpdate( y );
+	}
+	else if ( m_drag == eDragCancelled ) {
+	}
 	else if ( buttons == MoveCamera_buttons() ) {
 		ZWnd_PositionCamera( *this, y );
 	}
 	else
 	{
-		g_pParentWnd->SetStatusText( c_status_position, StringStream<64>( "z: ", FloatFormat( ScreenToZ( y ), 6, 1 ) ) );
+		ZWnd_setStatus( "z: ", ScreenToZ( y ) );
+
+		std::vector<ZBrushColumn> columns;
+		collectColumns( columns );
+		const ZBrushColumn* column;
+		bool top;
+		if ( findEdge( columns, y, column, top ) ) {
+			m_gl_widget->setCursor( Qt::SizeVerCursor );
+		}
+		else
+		{
+			m_gl_widget->unsetCursor();
+		}
+	}
+}
+
+void ZWnd::dragBegin(){
+	switch ( m_drag_action )
+	{
+	case eActionFace:
+		m_drag = eDragFace;
+		m_gl_widget->setCursor( Qt::SizeVerCursor );
+		break;
+	case eActionSelectMove:
+		Z_deselect();
+		Instance_setSelected( *m_drag_brush, true );
+		m_drag = eDragMove;
+		break;
+	case eActionMove:
+		m_drag = eDragMove;
+		break;
+	default:
+		m_drag = eDragCancelled; // nothing under the press; wait for the release
+		break;
+	}
+}
+
+void ZWnd::dragUpdate( int y ){
+	const float offset = float_snapped( ScreenToZ( y ) - m_drag_z, GetSnapGridSize() );
+	if ( m_drag == eDragMove ) {
+		moveSelection( offset );
+	}
+	else if ( m_drag == eDragFace ) {
+		moveFace( offset );
+	}
+	if ( m_drag == eDragMove ) {
+		ZWnd_setStatus( "dz: ", m_drag_offset );
+	}
+	else
+	{
+		ZWnd_setStatus( "z: ", ScreenToZ( y ) );
+	}
+	queueDraw();
+}
+
+void ZWnd::moveSelection( float offset ){
+	m_drag_offset = offset;
+	GlobalSelectionSystem().foreachSelected( ZTranslateSelected( Vector3( 0, 0, offset ) ) );
+	SceneChangeNotify();
+}
+
+void ZWnd::moveFace( float offset ){
+	Face& face = *m_drag_face;
+	const Brush& brush = m_drag_brush->getBrush();
+	const Matrix4& localToWorld = m_drag_brush->localToWorld();
+	const bool transformed = !matrix4_affine_equal( localToWorld, g_matrix4_identity );
+
+	const bool texturelock = g_brush_texturelock_enabled;
+	g_brush_texturelock_enabled = false; // resizing leaves the texture in place, as the drag tool does
+	auto apply = [&]( float z ){
+		face.planeChanged(); // reverts the face to its plane before the drag
+		if ( z != 0 ) {
+			Vector3 translation( 0, 0, z );
+			if ( transformed ) {
+				translation = matrix4_transformed_direction( matrix4_full_inverse( localToWorld ), translation );
+			}
+			face.transform( matrix4_translation_for_vec3( translation ), false );
+		}
+	};
+
+	apply( offset );
+	if ( !brush.contributes() ) {
+		// the face went through the brush: keep the most whole grid steps that leave a valid brush, as the drag tool does
+		const float grid = offset < 0? -GetGridSize() : GetGridSize();
+		int maxI = static_cast<int>( offset / grid );
+		int minI = 0;
+		while ( maxI > minI )
+		{
+			const int curI = minI + ( maxI - minI + 1 ) / 2;
+			apply( curI * grid );
+			if ( brush.contributes() ) {
+				minI = curI;
+			}
+			else
+			{
+				maxI = curI - 1;
+			}
+		}
+		offset = minI * grid;
+		apply( offset );
+	}
+	g_brush_texturelock_enabled = texturelock;
+
+	m_drag_offset = offset;
+	SceneChangeNotify();
+}
+
+void ZWnd::dragEnd(){
+	if ( m_drag == eDragMove ) {
+		if ( m_drag_offset != 0 ) {
+			const auto command = StringStream<64>( "zMoveSelected -z ", m_drag_offset );
+			UndoableCommand undo( command );
+			GlobalSceneGraph().traverse( ZFreezeTransforms() );
+		}
+		else
+		{
+			GlobalSceneGraph().traverse( ZFreezeTransforms() );
+		}
+	}
+	else if ( m_drag == eDragFace ) {
+		if ( m_drag_offset != 0 ) {
+			const auto command = StringStream<64>( "zDragFace -z ", m_drag_offset );
+			UndoableCommand undo( command );
+			m_drag_face->freezeTransform();
+		}
+		else
+		{
+			m_drag_face->planeChanged();
+		}
+	}
+	GlobalSelectionSystem().pivotChanged();
+	SceneChangeNotify();
+}
+
+void ZWnd::Z_CancelDrag(){
+	if ( m_drag == eDragMove ) {
+		moveSelection( 0 );
+		GlobalSceneGraph().traverse( ZFreezeTransforms() ); // identity: changes nothing and records no undo step
+	}
+	else if ( m_drag == eDragFace ) {
+		m_drag_face->planeChanged();
+		SceneChangeNotify();
+	}
+	if ( m_drag != eDragNone ) {
+		m_drag = eDragCancelled;
+		m_drag_offset = 0;
+		m_gl_widget->unsetCursor();
+		queueDraw();
 	}
 }
 
@@ -267,7 +639,8 @@ public:
 		const bool transformed = !matrix4_affine_equal( localToWorld, g_matrix4_identity );
 		double zmin = -std::numeric_limits<double>::infinity();
 		double zmax = std::numeric_limits<double>::infinity();
-		const Face* top = nullptr;
+		Face* top = nullptr;
+		Face* bottom = nullptr;
 		bool outside = false;
 
 		Brush_forEachFace( brush.getBrush(), [&]( Face& face ){
@@ -285,7 +658,11 @@ public:
 				}
 			}
 			else if ( plane.c < -1e-6 ) {
-				zmin = std::max( zmin, rest / plane.c );
+				const double z = rest / plane.c;
+				if ( z > zmin ) {
+					zmin = z;
+					bottom = &face;
+				}
 			}
 			else if ( rest < 0 ) {
 				outside = true;
@@ -300,7 +677,7 @@ public:
 		if ( const Shader* state = top->getShader().state() ) {
 			colour = state->getTexture().color;
 		}
-		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, brush.isSelected() || brush.parentSelected() } );
+		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, brush.isSelected() || brush.parentSelected(), top, bottom } );
 	}
 };
 
@@ -466,6 +843,42 @@ void ZWnd::Z_DrawCameraIcon(){
 	gl().glEnd();
 }
 
+void ZWnd::Z_DrawDragInfo(){
+	if ( m_drag != eDragMove && m_drag != eDragFace ) {
+		return;
+	}
+	StringOutputStream text( 64 );
+	if ( m_drag == eDragMove ) {
+		text << "dz " << m_drag_offset;
+	}
+	else
+	{
+		// height of the dragged brush along the sample line
+		std::vector<ZBrushColumn> columns;
+		collectColumns( columns );
+		const auto column = std::ranges::find( columns, m_drag_brush, &ZBrushColumn::brush );
+		if ( column == columns.end() ) {
+			return;
+		}
+		text << "h " << ( column->zmax - column->zmin );
+	}
+
+	// a bar across the top of the view; y is in world units
+	const float top = m_origin + m_nHeight / 2 / m_fScale;
+	const float height = ( GlobalOpenGL().m_font->getPixelHeight() + 4 ) / m_fScale;
+	gl().glColor3fv( vector3_to_array( g_xywindow_globals.color_gridback ) );
+	gl().glBegin( GL_QUADS );
+	gl().glVertex2f( 0, top - height );
+	gl().glVertex2f( m_nWidth, top - height );
+	gl().glVertex2f( m_nWidth, top );
+	gl().glVertex2f( 0, top );
+	gl().glEnd();
+
+	gl().glColor3fv( vector3_to_array( g_xywindow_globals.color_selbrushes ) );
+	gl().glRasterPos2f( 4, top - height + ( 2 - GlobalOpenGL().m_font->getPixelDescent() ) / m_fScale );
+	GlobalOpenGL().drawString( text.c_str() );
+}
+
 void ZWnd::Z_Draw(){
 	updateProbePoint();
 
@@ -500,8 +913,41 @@ void ZWnd::Z_Draw(){
 	Z_DrawColumns();
 	Z_DrawCameraIcon();
 	Z_DrawGrid( true );
+	Z_DrawDragInfo();
 }
 
+
+bool ZWnd_probeEditable(){
+	return g_pParentWnd != 0 && g_pParentWnd->GetZWnd() != 0 && g_z_shown.active();
+}
+
+void ZWnd_setProbePoint( const Vector3& point ){
+	if ( ZWnd_probeEditable() ) {
+		g_pParentWnd->GetZWnd()->SetProbePoint( point );
+	}
+}
+
+void ZWnd_drawProbeMarker( float scale ){
+	if ( !ZWnd_probeEditable() || g_zwnd_probeFollowsCamera ) {
+		return; // the camera icon marks the probe
+	}
+	const Vector3& probe = g_pParentWnd->GetZWnd()->GetProbePoint();
+	const float size = 6 / scale;
+
+	gl().glColor3fv( vector3_to_array( g_xywindow_globals.color_camera ) );
+	gl().glBegin( GL_LINES );
+	gl().glVertex3f( probe.x() - size, probe.y() - size, 0 );
+	gl().glVertex3f( probe.x() + size, probe.y() + size, 0 );
+	gl().glVertex3f( probe.x() - size, probe.y() + size, 0 );
+	gl().glVertex3f( probe.x() + size, probe.y() - size, 0 );
+	gl().glEnd();
+	gl().glBegin( GL_LINE_LOOP );
+	gl().glVertex3f( probe.x() - size, probe.y() - size, 0 );
+	gl().glVertex3f( probe.x() + size, probe.y() - size, 0 );
+	gl().glVertex3f( probe.x() + size, probe.y() + size, 0 );
+	gl().glVertex3f( probe.x() - size, probe.y() + size, 0 );
+	gl().glEnd();
+}
 
 void Z_Shown_Construct( QWidget* parent ){
 	g_z_shown.connect( parent );
@@ -519,6 +965,15 @@ void ZWnd_updateAll(){
 	}
 }
 
+void ZView_toggleProbeFollowsCamera(){
+	g_zwnd_probeFollowsCamera = !g_zwnd_probeFollowsCamera;
+	g_zwnd_probeFollowsCamera_item.update();
+	ZWnd_updateAll();
+	g_pParentWnd->forEachXYWnd( []( XYWnd* xywnd ){
+		xywnd->queueDraw(); // the probe marker
+	} );
+}
+
 void ZWnd_selectionChanged( const Selectable& selectable ){
 	ZWnd_updateAll();
 }
@@ -531,6 +986,7 @@ void ZWnd_mapValidChanged(){
 
 void ZWindow_Construct(){
 	GlobalToggles_insert( "ToggleZView", makeCallbackF( ZView_toggleShown ), ToggleItem::AddCallbackCaller( g_z_shown.m_item ) );
+	GlobalToggles_insert( "ToggleZViewFollowCamera", makeCallbackF( ZView_toggleProbeFollowsCamera ), ToggleItem::AddCallbackCaller( g_zwnd_probeFollowsCamera_item ) );
 
 	GlobalPreferenceSystem().registerPreference( "ZVIS", makeBoolStringImportCallback( ToggleShownImportBoolCaller( g_z_shown ) ), makeBoolStringExportCallback( ToggleShownExportBoolCaller( g_z_shown ) ) );
 

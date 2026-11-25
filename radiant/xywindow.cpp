@@ -67,6 +67,7 @@
 #include "feedback.h"
 #include "grid.h"
 #include "windowobservers.h"
+#include "zwindow.h"
 
 #include "render.h"
 
@@ -401,6 +402,9 @@ void XYWnd::overlayDraw(){
 		gl().glScalef( m_fScale, m_fScale, 1 );
 		gl().glTranslatef( -m_vOrigin[nDim1], -m_vOrigin[nDim2], 0 );
 		DrawCameraIcon( Camera_getOrigin( *g_pParentWnd->GetCamWnd() ), Camera_getAngles( *g_pParentWnd->GetCamWnd() ) );
+		if ( m_viewType == XY ) {
+			ZWnd_drawProbeMarker( m_fScale );
+		}
 	}
 
 	if ( g_bCrossHairs ) {
@@ -626,6 +630,20 @@ void XYWnd::SetCustomPivotOrigin( int x, int y ) const {
 
 unsigned int MoveCamera_buttons(){
 	return RAD_CONTROL | RAD_MBUTTON;
+}
+
+/// \brief Places the Z view's probe point; the selection observer ignores this combination.
+unsigned int ZProbe_buttons(){
+	return RAD_CONTROL | RAD_SHIFT | RAD_RBUTTON;
+}
+
+// Z view selection, matching the XY view: click cycles, shift click toggles
+unsigned int ZSelect_buttons(){
+	return RAD_LBUTTON;
+}
+
+unsigned int ZSelectToggle_buttons(){
+	return RAD_LBUTTON | RAD_SHIFT;
 }
 
 void XYWnd_PositionCamera( XYWnd* xywnd, int x, int y, CamWnd& camwnd ){
@@ -988,6 +1006,9 @@ void XYWnd::XY_MouseDown( int x, int y, unsigned int buttons ){
 	else if ( buttons == SetCustomPivotOrigin_buttons() ) {
 		SetCustomPivotOrigin( x, y );
 	}
+	else if ( buttons == ZProbe_buttons() && m_viewType == XY && ZWnd_probeEditable() ) {
+		ZWnd_setProbePoint( XY_ToPoint( x, y ) );
+	}
 	else
 	{
 		m_window_observer->onMouseDown( WindowVector( x, y ), button_for_flags( buttons ), modifiers_for_flags( buttons ) );
@@ -1043,6 +1064,10 @@ void XYWnd::XY_MouseMoved( int x, int y, unsigned int buttons ){
 
 	else if ( buttons == SetCustomPivotOrigin_buttons() ) {
 		SetCustomPivotOrigin( x, y );
+	}
+
+	else if ( buttons == ZProbe_buttons() && m_viewType == XY && ZWnd_probeEditable() ) {
+		ZWnd_setProbePoint( XY_ToPoint( x, y ) );
 	}
 
 	else

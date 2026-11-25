@@ -945,6 +945,7 @@ void create_view_menu( QMenuBar *menubar, MainFrame::EViewStyle style ){
 	}
 	if ( style != MainFrame::eSplit ) {
 		create_check_menu_item_with_mnemonic( menu, "Z View", "ToggleZView" );
+		create_check_menu_item_with_mnemonic( menu, "Z View Follows Camera", "ToggleZViewFollowCamera" );
 	}
 	if ( style != MainFrame::eRegular && style != MainFrame::eRegularLeft ) {
 		create_menu_item_with_mnemonic( menu, "Console", "ToggleConsole" );

@@ -251,6 +251,9 @@ unsigned int buttons_for_event_button( QMouseEvent* event );
 unsigned int buttons_for_state( const QMouseEvent& event );
 unsigned int Move_buttons();
 unsigned int MoveCamera_buttons();
+unsigned int ZProbe_buttons();
+unsigned int ZSelect_buttons();
+unsigned int ZSelectToggle_buttons();
 
 struct xywindow_globals_t
 {

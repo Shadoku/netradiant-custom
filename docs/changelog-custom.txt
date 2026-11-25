@@ -1170,6 +1170,10 @@ misc...
 	* .dpk .dpkdir game archives support
 	* .webp image format support
 	* GreyBlue2, BlenderDark, BlenderLight GUI themes by @julius2k26
+	* Z view (View->Z View): vertical extent of the brushes under the camera or a placed probe point, with the camera height
+		m1 click: tunnel selector; shift + m1: toggle selection
+		m1 drag selected column: move selection vertically; m1 drag its top or bottom edge: move that face; Esc cancels a drag
+		ctrl + shift + m2 in XY view: place the probe point; View->Z View Follows Camera returns it to the camera
 
 
 
