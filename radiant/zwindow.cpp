@@ -629,11 +629,22 @@ public:
 	}
 	void operator()( BrushInstance& brush ) const {
 		const AABB& bounds = brush.worldAABB();
-		if ( std::fabs( m_probe.x() - bounds.origin.x() ) > bounds.extents.x()
-		  || std::fabs( m_probe.y() - bounds.origin.y() ) > bounds.extents.y() ) {
+		const bool selected = brush.isSelected() || brush.parentSelected();
+		const bool underProbe = std::fabs( m_probe.x() - bounds.origin.x() ) <= bounds.extents.x()
+		                     && std::fabs( m_probe.y() - bounds.origin.y() ) <= bounds.extents.y();
+		if ( underProbe && addColumn( brush, m_probe.x(), m_probe.y(), selected ) ) {
 			return;
 		}
-
+		// selected brushes are always shown: sample the ones the probe misses through their own centre
+		if ( selected && !addColumn( brush, bounds.origin.x(), bounds.origin.y(), selected ) ) {
+			// the centre of the bounds is outside the brush: show the bounds, without draggable faces
+			m_columns.push_back( ZBrushColumn{ &brush, bounds.origin.z() - bounds.extents.z(), bounds.origin.z() + bounds.extents.z(),
+			                                   Vector3( .5f, .5f, .5f ), selected, nullptr, nullptr } );
+		}
+	}
+private:
+	/// \brief Adds the interval where the vertical line through ( x, y ) is inside \p brush. Returns false if it misses.
+	bool addColumn( BrushInstance& brush, const double x, const double y, const bool selected ) const {
 		// face planes are in the brush's local space; outward normals, so the inside is dot( normal, point ) <= dist
 		const Matrix4& localToWorld = brush.localToWorld();
 		const bool transformed = !matrix4_affine_equal( localToWorld, g_matrix4_identity );
@@ -648,8 +659,8 @@ public:
 				return;
 			}
 			const Plane3 plane = transformed? plane3_transformed_affine_full( face.plane3(), localToWorld ) : face.plane3();
-			// clip the line ( probe.x, probe.y, z ): normal.z * z <= dist - normal.x * probe.x - normal.y * probe.y
-			const double rest = plane.dist() - plane.a * m_probe.x() - plane.b * m_probe.y();
+			// clip the line ( x, y, z ): normal.z * z <= dist - normal.x * x - normal.y * y
+			const double rest = plane.dist() - plane.a * x - plane.b * y;
 			if ( plane.c > 1e-6 ) {
 				const double z = rest / plane.c;
 				if ( z < zmax ) {
@@ -670,14 +681,15 @@ public:
 		} );
 
 		if ( outside || top == nullptr || !( zmin < zmax ) || !std::isfinite( zmin ) ) {
-			return;
+			return false;
 		}
 
 		Vector3 colour( .5f, .5f, .5f );
 		if ( const Shader* state = top->getShader().state() ) {
 			colour = state->getTexture().color;
 		}
-		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, brush.isSelected() || brush.parentSelected(), top, bottom } );
+		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, selected, top, bottom } );
+		return true;
 	}
 };
 
