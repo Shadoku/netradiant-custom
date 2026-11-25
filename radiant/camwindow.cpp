@@ -724,24 +724,24 @@ static void Camera_motionDelta( int x, int y, const QMouseEvent *event, camera_t
 
 	cam.m_strafe_forward_invert = false;
 
+	// ctrl and the right button do not strafe: holding the right button is mouse look,
+	// and ctrl leaves the camera movement alone, so that ctrl selection clicks work during mouse look
+	if( event->modifiers() & Qt::KeyboardModifier::ControlModifier ){
+		cam.m_strafe = false;
+		return;
+	}
+
 	switch ( g_camwindow_globals_private.m_strafeMode )
 	{
 	case 0:
-		cam.m_strafe = false;
-		break;
 	case 1:
-		cam.m_strafe = ( event->modifiers() & Qt::KeyboardModifier::ControlModifier ) || ( event->buttons() & Qt::MouseButton::RightButton );
-		cam.m_strafe_forward = false;
-		break;
 	case 2:
-		cam.m_strafe = ( event->modifiers() & Qt::KeyboardModifier::ControlModifier ) || ( event->buttons() & Qt::MouseButton::RightButton );
-		cam.m_strafe_forward = true;
+		cam.m_strafe = false;
 		break;
 	case 4:
 		cam.m_strafe_forward_invert = true; // fall through
 	default: /* 3 & 4 */
-		cam.m_strafe = ( event->modifiers() & Qt::KeyboardModifier::ControlModifier ) || ( event->buttons() & Qt::MouseButton::RightButton ) || ( event->modifiers() & Qt::KeyboardModifier::ShiftModifier );
-		cam.m_strafe_forward = ( event->modifiers() & Qt::KeyboardModifier::ShiftModifier ) != 0;
+		cam.m_strafe = cam.m_strafe_forward = ( event->modifiers() & Qt::KeyboardModifier::ShiftModifier ) != 0;
 		break;
 	}
 
