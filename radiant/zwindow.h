@@ -39,6 +39,7 @@ struct ZBrushColumn
 	bool selected;
 	Face* top;    // the faces the sample line leaves and enters the brush through
 	Face* bottom;
+	scene::Instance* instance; // what the column selects: the brush, or a selected point entity ( then brush is null )
 };
 
 /// \brief Z view: shows the vertical extent of the brushes under the probe point, and the camera height.
@@ -134,7 +135,8 @@ private:
 	int m_drag_y;
 	float m_drag_z;               // world z under the press
 	float m_drag_offset;          // applied vertical offset, after snapping and clamping
-	BrushInstance* m_drag_brush;  // face drag, or the brush to select for eActionSelectMove
+	BrushInstance* m_drag_brush;  // face drag
+	scene::Instance* m_drag_instance; // what to select for eActionSelectMove
 	Face* m_drag_face;
 	bool m_drag_top;
 	QObject* m_drag_keyFilter;

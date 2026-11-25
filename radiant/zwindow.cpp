@@ -48,6 +48,8 @@
 #include "scenelib.h"
 #include "transformlib.h"
 #include "iundo.h"
+#include "ientity.h"
+#include "eclasslib.h"
 #include "stream/stringstream.h"
 #include "texturelib.h"
 
@@ -198,6 +200,7 @@ ZWnd::ZWnd() :
 	m_drag_z( 0 ),
 	m_drag_offset( 0 ),
 	m_drag_brush( nullptr ),
+	m_drag_instance( nullptr ),
 	m_drag_face( nullptr ),
 	m_drag_top( false ),
 	m_drag_keyFilter( new ZDragKeyFilter( *this ) )
@@ -346,25 +349,25 @@ void ZWnd::selectClick( int y, unsigned int buttons ){
 	std::vector<ZBrushColumn> columns;
 	collectColumns( columns );
 	const float z = ScreenToZ( y );
-	std::vector<BrushInstance*> hits; // smallest interval first
+	std::vector<scene::Instance*> hits; // smallest interval first
 	for ( auto i = columns.rbegin(); i != columns.rend(); ++i )
 	{
 		if ( i->zmin <= z && z <= i->zmax ) {
-			hits.push_back( i->brush );
+			hits.push_back( i->instance );
 		}
 	}
 
 	if ( buttons == ZSelectToggle_buttons() ) {
 		if ( !hits.empty() ) {
-			Instance_setSelected( *hits.front(), !hits.front()->isSelected() );
+			Instance_setSelected( *hits.front(), !Instance_isSelected( *hits.front() ) );
 		}
 	}
 	else // cycle through the brushes under the click, as a plain click in the XY view does
 	{
-		BrushInstance* next = hits.empty()? nullptr : hits.front();
+		scene::Instance* next = hits.empty()? nullptr : hits.front();
 		for ( std::size_t i = 0; i < hits.size(); ++i )
 		{
-			if ( hits[i]->isSelected() ) {
+			if ( Instance_isSelected( *hits[i] ) ) {
 				next = hits[( i + 1 ) % hits.size()];
 				break;
 			}
@@ -401,6 +404,7 @@ void ZWnd::Z_MouseDown( int x, int y, unsigned int buttons ){
 		m_drag_offset = 0;
 		m_drag_action = eActionNone;
 		m_drag_brush = nullptr;
+		m_drag_instance = nullptr;
 		m_drag_face = nullptr;
 
 		const ZBrushColumn* column;
@@ -420,7 +424,7 @@ void ZWnd::Z_MouseDown( int x, int y, unsigned int buttons ){
 			{
 				if ( i->zmin <= z && z <= i->zmax ) {
 					m_drag_action = eActionSelectMove;
-					m_drag_brush = i->brush;
+					m_drag_instance = i->instance;
 					break;
 				}
 			}
@@ -441,6 +445,7 @@ void ZWnd::Z_MouseUp( int x, int y, unsigned int buttons ){
 		}
 		m_drag = eDragNone;
 		m_drag_brush = nullptr;
+		m_drag_instance = nullptr;
 		m_drag_face = nullptr;
 		qApp->removeEventFilter( m_drag_keyFilter );
 		queueDraw();
@@ -493,7 +498,7 @@ void ZWnd::dragBegin(){
 		break;
 	case eActionSelectMove:
 		Z_deselect();
-		Instance_setSelected( *m_drag_brush, true );
+		Instance_setSelected( *m_drag_instance, true );
 		m_drag = eDragMove;
 		break;
 	case eActionMove:
@@ -639,7 +644,7 @@ public:
 		if ( selected && !addColumn( brush, bounds.origin.x(), bounds.origin.y(), selected ) ) {
 			// the centre of the bounds is outside the brush: show the bounds, without draggable faces
 			m_columns.push_back( ZBrushColumn{ &brush, bounds.origin.z() - bounds.extents.z(), bounds.origin.z() + bounds.extents.z(),
-			                                   Vector3( .5f, .5f, .5f ), selected, nullptr, nullptr } );
+			                                   Vector3( .5f, .5f, .5f ), selected, nullptr, nullptr, &brush } );
 		}
 	}
 private:
@@ -688,13 +693,38 @@ private:
 		if ( const Shader* state = top->getShader().state() ) {
 			colour = state->getTexture().color;
 		}
-		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, selected, top, bottom } );
+		m_columns.push_back( ZBrushColumn{ &brush, static_cast<float>( zmin ), static_cast<float>( zmax ), colour, selected, top, bottom, &brush } );
+		return true;
+	}
+};
+
+/// \brief Adds a column for each selected point entity, spanning its bounds, wherever it is on the map.
+/// Brush entities are already shown through their brushes.
+class ZEntityColumnCollector : public scene::Graph::Walker
+{
+	std::vector<ZBrushColumn>& m_columns;
+public:
+	ZEntityColumnCollector( std::vector<ZBrushColumn>& columns ) : m_columns( columns ){
+	}
+	bool pre( const scene::Path& path, scene::Instance& instance ) const override {
+		if ( !path.top().get().visible() ) {
+			return false;
+		}
+		if ( Entity* entity = Node_getEntity( path.top() ) ) {
+			if ( !entity->isContainer() && Instance_isSelected( instance ) ) {
+				const AABB& bounds = instance.worldAABB();
+				m_columns.push_back( ZBrushColumn{ nullptr, bounds.origin.z() - bounds.extents.z(), bounds.origin.z() + bounds.extents.z(),
+				                                   entity->getEntityClass().color, true, nullptr, nullptr, &instance } );
+			}
+			return entity->isContainer(); // nothing to show inside a point entity
+		}
 		return true;
 	}
 };
 
 void ZWnd::collectColumns( std::vector<ZBrushColumn>& columns ) const {
 	Scene_forEachVisibleBrush( GlobalSceneGraph(), ZColumnCollector( m_probe, columns ) );
+	GlobalSceneGraph().traverse( ZEntityColumnCollector( columns ) );
 	// draw the largest first, so that the intervals inside it stay visible
 	std::stable_sort( columns.begin(), columns.end(), []( const ZBrushColumn& a, const ZBrushColumn& b ){
 		return ( a.zmax - a.zmin ) > ( b.zmax - b.zmin );
