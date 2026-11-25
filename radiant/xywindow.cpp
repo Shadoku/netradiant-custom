@@ -1332,7 +1332,8 @@ void XYWnd::XY_DrawGrid() {
 	gl().glDisable( GL_TEXTURE_1D );
 	gl().glDisable( GL_DEPTH_TEST );
 	gl().glDisable( GL_BLEND );
-	gl().glLineWidth( 1 );
+	// widths are in device pixels: scale the grid lines, so they are not hairlines on a high-DPI display
+	gl().glLineWidth( std::max( 1.0, m_gl_widget->devicePixelRatioF() ) );
 
 	const float w = ( m_nWidth / 2 / m_fScale );
 	const float h = ( m_nHeight / 2 / m_fScale );
@@ -1439,6 +1440,7 @@ void XYWnd::XY_DrawGrid() {
 			gl().glDisable( GL_BLEND );
 		}
 	}
+	gl().glLineWidth( 1 );
 
 	// draw coordinate text if needed
 	if ( g_xywindow_globals_private.show_coordinates ) {

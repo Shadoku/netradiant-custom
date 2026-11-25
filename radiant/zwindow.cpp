@@ -781,6 +781,8 @@ void ZWnd::Z_DrawGrid( bool text ){
 	if ( a < 1.0f ) {
 		gl().glEnable( GL_BLEND );
 	}
+	// as in the XY view: scale the grid lines with the display, they are in device pixels
+	gl().glLineWidth( std::max( 1.0, m_gl_widget->devicePixelRatioF() ) );
 
 	// draw minor blocks
 	if ( g_xywindow_globals.color_gridminor != g_xywindow_globals.color_gridback ) {
@@ -812,6 +814,7 @@ void ZWnd::Z_DrawGrid( bool text ){
 	if ( a < 1.0f ) {
 		gl().glDisable( GL_BLEND );
 	}
+	gl().glLineWidth( 1 );
 }
 
 void ZWnd::Z_DrawColumns(){
