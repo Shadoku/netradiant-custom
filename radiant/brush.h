@@ -3882,6 +3882,63 @@ public:
 			ei.bestPlaneIndirect( test, planeData, dot );
 		}
 	}
+	struct PlaneNear
+	{
+		Plane3 m_plane;
+		float m_dist;     // from the pointer to the face's edge on screen, in halves of the selection box
+		Vector2 m_normal; // direction the face moves on screen
+	};
+	/// \brief Gathers the faces seen edge-on, as side faces are in a 2D view, whose edge is within \p band of the pointer.
+	/// The band is narrower on the inner side of a brush that is small on screen, so it can still be grabbed to move.
+	void gatherPlanesNear( const SelectionTest& test, const float band, std::vector<PlaneNear>& planes ) const {
+		const Matrix4 local2device = matrix4_multiplied_by_matrix4( test.getVolume().GetViewMatrix(), localToWorld() );
+		const auto device = [&local2device]( const Vector3& point ){
+			return vector4_projected( matrix4_transformed_vector4( local2device, Vector4( point, 1 ) ) ).vec2();
+		};
+		const Vector3 viewdir( test.getVolume().getViewDir() );
+
+		for ( const FaceInstance& fi : m_faceInstances )
+		{
+			const Face& face = fi.getFace();
+			const Winding& winding = face.getWinding();
+			if( !face.contributes() || winding.numpoints < 3 )
+				continue;
+			const Vector3 normal = face.plane3().normal();
+			if( std::fabs( vector3_dot( vector3_normalised( matrix4_transformed_direction( localToWorld(), normal ) ), viewdir ) ) > 0.03 )
+				continue; // not edge-on
+
+			const Vector2 centre = device( face.centroid() );
+			Vector2 normal2 = device( face.centroid() + normal ) - centre;
+			const float length = vector2_length( normal2 );
+			if( length < 1e-6f )
+				continue;
+			normal2 /= length;
+
+			// distance from the pointer, which is the origin, to the face: a segment on screen
+			float dist = std::numeric_limits<float>::max();
+			for( std::size_t i = 0; i < winding.numpoints; ++i ){
+				const Vector2 a = device( winding[i].vertex );
+				const Vector2 ab = device( winding[( i + 1 ) % winding.numpoints].vertex ) - a;
+				const float len2 = vector2_dot( ab, ab );
+				const float t = len2 > 0? std::clamp( static_cast<float>( -vector2_dot( a, ab ) / len2 ), 0.f, 1.f ) : 0;
+				dist = std::min( dist, static_cast<float>( vector2_length( a + ab * t ) ) );
+			}
+
+			float limit = band;
+			if( vector2_dot( normal2, centre ) > 0 ){ // the pointer is behind the face: on the brush's side
+				float min = std::numeric_limits<float>::max(), max = std::numeric_limits<float>::lowest();
+				for ( const FaceInstance& other : m_faceInstances )
+					for( const WindingVertex& v : other.getFace().getWinding() ){
+						const float d = vector2_dot( normal2, device( v.vertex ) );
+						min = std::min( min, d );
+						max = std::max( max, d );
+					}
+				limit = std::min( band, ( max - min ) * .25f );
+			}
+			if( dist <= limit )
+				planes.push_back( PlaneNear{ face.plane3(), dist, normal2 } );
+		}
+	}
 	void selectByPlane( const Plane3& plane ) override {
 		for ( FaceInstance& fi : m_faceInstances )
 			if( plane3_equal( plane, fi.getFace().plane3() ) || plane3_equal( plane, plane3_flipped( fi.getFace().plane3() ) ) )

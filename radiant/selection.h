@@ -39,6 +39,17 @@ public:
 
 SelectionSystemWindowObserver* NewWindowObserver();
 
+/// \brief Which resize cursor a 2D view should show: the pointer is where a drag would resize the selection.
+enum class EResizeCursor
+{
+	None,
+	Horizontal,
+	Vertical,
+	DiagonalUp,   // bottom left to top right
+	DiagonalDown, // top left to bottom right
+};
+inline EResizeCursor g_dragResizeCursor = EResizeCursor::None; // set by the drag manipulator's highlight
+
 void SelectionSystem_connectTransformsCallbacks( const std::array<Callback<void(const char*)>, 4>& callbacks );
 
 #include "math/vectorfwd.h"

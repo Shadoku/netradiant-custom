@@ -26,6 +26,7 @@
 
 #include "gtkutil/xorrectangle.h"
 #include "view.h"
+#include "selection.h"
 #include "map.h"
 
 #include "qerplugin.h"
@@ -189,6 +190,7 @@ private:
 	Vector3 m_nNewBrushPress;
 	scene::Node* m_NewBrushDrag;
 	bool m_bNewBrushDrag;
+	EResizeCursor m_resizeCursor = EResizeCursor::None;
 
 	Vector3 m_mousePosition;
 

@@ -1074,6 +1074,18 @@ void XYWnd::XY_MouseMoved( int x, int y, unsigned int buttons ){
 	{
 		m_window_observer->onMouseMotion( WindowVector( x, y ), modifiers_for_flags( buttons ) );
 
+		if( buttons == 0 && m_resizeCursor != g_dragResizeCursor ){ // show where a drag would resize the selection
+			m_resizeCursor = g_dragResizeCursor;
+			switch ( m_resizeCursor )
+			{
+			case EResizeCursor::None:         m_gl_widget->unsetCursor(); break;
+			case EResizeCursor::Horizontal:   m_gl_widget->setCursor( Qt::SizeHorCursor ); break;
+			case EResizeCursor::Vertical:     m_gl_widget->setCursor( Qt::SizeVerCursor ); break;
+			case EResizeCursor::DiagonalUp:   m_gl_widget->setCursor( Qt::SizeBDiagCursor ); break;
+			case EResizeCursor::DiagonalDown: m_gl_widget->setCursor( Qt::SizeFDiagCursor ); break;
+			}
+		}
+
 		{
 			const auto status = StringStream<64>( "x: ", FloatFormat( m_mousePosition[0], 6, 1 ),
 			                                    "  y: ", FloatFormat( m_mousePosition[1], 6, 1 ),

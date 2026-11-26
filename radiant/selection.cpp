@@ -1315,6 +1315,7 @@ public:
 	}
 
 	void HighlightManipulator( const View& view, const DeviceVector device_point, const DeviceVector device_epsilon ){
+		g_dragResizeCursor = EResizeCursor::None;
 		Manipulatable::assign_static( view, device_point, device_epsilon ); //this b4 m_manipulator calls!
 
 		if ( ( somethingSelected() && transformOrigin_isTranslatable() )

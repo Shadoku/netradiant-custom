@@ -31,6 +31,9 @@
 #include "selectionlib.h"
 #include "brush.h"
 #include "grid.h"
+#include "selection.h"
+
+#include <QApplication>
 
 
 inline PlaneSelectable* Instance_getPlaneSelectable( scene::Instance& instance ){
@@ -267,6 +270,46 @@ bool Scene_forEachBrush_setupExtrude( SelectionTest& test, DragExtrudeFaces& ext
 }
 
 
+/// \brief Finds what a plain drag near the outline of the selected brushes resizes in a 2D view:
+/// the face with the closest edge, plus a face around the corner from it, when the pointer is near a corner.
+/// \p cursor is the cursor to show there. Returns false, if the pointer is not near the outline.
+static bool selection_planesNearPointer( SelectionTest& test, std::vector<Plane3>& planes, EResizeCursor& cursor ){
+	const float c_band = 8; // pixels on each side of the outline
+	// the selection box is g_SELECT_EPSILON device pixels wide; the test measures in halves of it
+	const float band = c_band * qApp->devicePixelRatio() * 2 / g_SELECT_EPSILON;
+
+	std::vector<BrushInstance::PlaneNear> near;
+	Scene_forEachVisibleSelectedBrush( [&]( BrushInstance& brushInstance ){
+		brushInstance.gatherPlanesNear( test, band, near );
+	} );
+	if( near.empty() )
+		return false;
+
+	const auto closer = []( const BrushInstance::PlaneNear& a, const BrushInstance::PlaneNear& b ){ return a.m_dist < b.m_dist; };
+	const auto first = *std::ranges::min_element( near, closer );
+	planes.push_back( first.m_plane );
+	Vector2 direction = first.m_normal;
+
+	// a face is around the corner, if it moves across the first one's direction
+	std::erase_if( near, [&first]( const BrushInstance::PlaneNear& plane ){ return std::fabs( vector2_dot( plane.m_normal, first.m_normal ) ) > .7f; } );
+	if( !near.empty() ){
+		const auto second = *std::ranges::min_element( near, closer );
+		planes.push_back( second.m_plane );
+		direction += second.m_normal;
+	}
+
+	// screen y points up
+	double angle = radians_to_degrees( std::atan2( direction.y(), direction.x() ) );
+	if( angle < 0 )
+		angle += 180;
+	cursor = ( angle < 22.5 || angle >= 157.5 )? EResizeCursor::Horizontal
+	       : angle < 67.5?                       EResizeCursor::DiagonalUp
+	       : angle < 112.5?                      EResizeCursor::Vertical
+	       :                                     EResizeCursor::DiagonalDown;
+	return true;
+}
+
+
 bool selection_selectVerticesOrFaceVertices( SelectionTest& test ){
 	{	/* try to hit vertices */
 		DeepBestSelector deepSelector;
@@ -420,9 +463,16 @@ public:
 				}
 				else if( g_modifiers == c_modifierNone ){
 					BooleanSelector booleanSelector;
-					Scene_TestSelect_Primitive( booleanSelector, test, view );
-
-					if ( booleanSelector.isSelected() ) { /* hit a primitive */
+					std::vector<Plane3> planes;
+					EResizeCursor cursor;
+					if( !view.fill() && selection_planesNearPointer( test, planes, cursor ) ){ /* near the outline in 2D: resize, whatever is under the pointer */
+						for( const Plane3& plane : planes )
+							Scene_forEachVisibleSelectedPlaneselectable( [plane]( PlaneSelectable& planeSelectable ){
+								planeSelectable.selectByPlane( plane );
+							} );
+						m_selected = true;
+					}
+					else if ( Scene_TestSelect_Primitive( booleanSelector, test, view ), booleanSelector.isSelected() ) { /* hit a primitive */
 						m_dragSelected = true; /* drag a primitive */
 						test.BeginMesh( g_matrix4_identity, true );
 						m_freeDragXY_Z.set0( vector4_projected( matrix4_transformed_vector4( test.getScreen2world(), Vector4( 0, 0, booleanSelector.bestIntersection().depth(), 1 ) ) ) );
@@ -507,6 +557,7 @@ public:
 	void highlight( const View& view, const Matrix4& pivot2world ) override {
 		SelectionVolume test( view );
 		std::vector<std::vector<Vector3>> polygons;
+		g_dragResizeCursor = EResizeCursor::None;
 		/* conditions structure respects one in testSelect() */
 		if( g_modifiers == ( c_modifierAlt | c_modifierControl )
 		 && GlobalSelectionSystem().Mode() == SelectionSystem::ePrimitive
@@ -547,6 +598,10 @@ public:
 							}
 						}
 					}
+				}
+				else if( g_modifiers == c_modifierNone && !view.fill() ){ // resize by the outline
+					std::vector<Plane3> planes;
+					selection_planesNearPointer( test, planes, g_dragResizeCursor );
 				}
 			}
 			else if( g_modifiers == c_modifierNone // components
