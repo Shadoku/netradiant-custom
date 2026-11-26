@@ -278,22 +278,22 @@ static bool selection_planesNearPointer( SelectionTest& test, std::vector<Plane3
 	// the selection box is g_SELECT_EPSILON device pixels wide; the test measures in halves of it
 	const float band = c_band * qApp->devicePixelRatio() * 2 / g_SELECT_EPSILON;
 
-	std::vector<BrushInstance::PlaneNear> near;
+	std::vector<BrushInstance::PlaneNear> nearPlanes;
 	Scene_forEachVisibleSelectedBrush( [&]( BrushInstance& brushInstance ){
-		brushInstance.gatherPlanesNear( test, band, near );
+		brushInstance.gatherPlanesNear( test, band, nearPlanes );
 	} );
-	if( near.empty() )
+	if( nearPlanes.empty() )
 		return false;
 
 	const auto closer = []( const BrushInstance::PlaneNear& a, const BrushInstance::PlaneNear& b ){ return a.m_dist < b.m_dist; };
-	const auto first = *std::ranges::min_element( near, closer );
+	const auto first = *std::ranges::min_element( nearPlanes, closer );
 	planes.push_back( first.m_plane );
 	Vector2 direction = first.m_normal;
 
 	// a face is around the corner, if it moves across the first one's direction
-	std::erase_if( near, [&first]( const BrushInstance::PlaneNear& plane ){ return std::fabs( vector2_dot( plane.m_normal, first.m_normal ) ) > .7f; } );
-	if( !near.empty() ){
-		const auto second = *std::ranges::min_element( near, closer );
+	std::erase_if( nearPlanes, [&first]( const BrushInstance::PlaneNear& plane ){ return std::fabs( vector2_dot( plane.m_normal, first.m_normal ) ) > .7f; } );
+	if( !nearPlanes.empty() ){
+		const auto second = *std::ranges::min_element( nearPlanes, closer );
 		planes.push_back( second.m_plane );
 		direction += second.m_normal;
 	}
